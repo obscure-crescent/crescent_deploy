@@ -1,0 +1,379 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mare-server
+spec:
+  initContainers:
+    - name: wait-for-postgres
+      image: busybox:latest
+      command: ["sh", "-c", "until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done;"]
+  containers:
+    - name: mare-server
+      image: ghcr.io/obscure-crescent/crescent_server/crescent_server:latest
+      ports:
+        - containerPort: 6000
+          hostPort: 6000
+          hostIP: ${HOST_IP}
+        - containerPort: 6005
+          hostPort: 6005
+          hostIP: ${HOST_IP}
+      env:
+        - name: MareSynchronos__CdnFullUrl
+          value: "http://${DOMAIN}:6200/cache/"
+        - name: ASPNETCORE_URLS
+          value: "http://+:6000;http://+:6005"
+      volumeMounts:
+        - name: config-auth
+          mountPath: /opt/MareSynchronosServer/appsettings.json
+          subPath: server-standalone.json
+        - name: log-server
+          mountPath: /opt/MareSynchronosServer/logs
+        - mountPath: /var/run/postgresql
+          name: postgres-socket
+  volumes:
+    - name: config-auth
+      configMap:
+        name: mare-config
+    - name: log-server
+      hostPath:
+        path: ../log/server-standalone
+        type: DirectoryOrCreate
+    - name: postgres-socket
+      hostPath:
+        path: /tmp/postgresql-sockets
+        type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mare-auth
+spec:
+  restartPolicy: Always
+  containers:
+    - name: mare-auth
+      image: ghcr.io/obscure-crescent/crescent_auth/crescent_auth:latest
+      ports:
+        - containerPort: 6100
+          hostPort: 6100
+          protocol: TCP
+          hostIP: ${HOST_IP}
+      env:
+        - name: DOTNET_USE_POLLING_FILE_WATCHER
+          value: "1"
+        - name: MareSynchronos__MetricsPort
+          value: "6153"
+        - name: ASPNETCORE_URLS
+          value: "http://+:6100"
+      volumeMounts:
+        - mountPath: /opt/MareSynchronosAuthService/appsettings.json
+          name: config-auth
+          subPath: authservice-standalone.json
+        - mountPath: /opt/MareSynchronosAuthService/logs
+          name: log-auth
+        - mountPath: /var/run/postgresql
+          name: postgres-socket
+    - name: mare-services
+      image: ghcr.io/obscure-crescent/crescent_services/crescent_services:latest
+      ports:
+        - containerPort: 6110
+          hostPort: 6110
+          protocol: TCP
+          hostIP: ${HOST_IP}
+      env:
+        - name: DOTNET_USE_POLLING_FILE_WATCHER
+          value: "1"
+        - name: MareSynchronos__MetricsPort
+          value: "6152"
+        - name: ASPNETCORE_URLS
+          value: "http://+:6110"
+      volumeMounts:
+        - mountPath: /opt/MareSynchronosServices/appsettings.json
+          name: config-auth
+          subPath: services-standalone.json
+        - mountPath: /opt/MareSynchronosServices/logs
+          name: log-services
+        - mountPath: /var/run/postgresql
+          name: postgres-socket
+    - name: mare-files
+      image: ghcr.io/obscure-crescent/crescent_files/crescent_files:latest
+      ports:
+        - containerPort: 6200
+          hostPort: 6200
+          protocol: TCP
+          hostIP: ${HOST_IP}
+      env:
+        - name: MareSynchronos__CdnFullUrl
+          value: "http://${DOMAIN}:6200/cache/"
+        - name: DOTNET_USE_POLLING_FILE_WATCHER
+          value: "1"
+        - name: MareSynchronos__MetricsPort
+          value: "6154"
+        - name: ASPNETCORE_URLS
+          value: "http://+:6200"
+      volumeMounts:
+        - mountPath: /opt/MareSynchronosStaticFilesServer/appsettings.json
+          name: config-auth
+          subPath: files-standalone.json
+        - mountPath: /opt/MareSynchronosStaticFilesServer/logs
+          name: log-files
+        - mountPath: /var/run/postgresql
+          name: postgres-socket
+        - mountPath: /marecache
+          name: files-data
+  volumes:
+    - name: postgres-socket
+      hostPath:
+        path: /tmp/postgresql-sockets
+        type: DirectoryOrCreate
+    - name: cache
+      emptyDir: {}
+    - name: log-server
+      hostPath:
+        path: ../log/server-standalone
+        type: DirectoryOrCreate
+    - name: log-auth
+      hostPath:
+        path: ../log/authservice-standalone
+        type: DirectoryOrCreate
+    - name: log-services
+      hostPath:
+        path: ../log/services-standalone
+        type: DirectoryOrCreate
+    - name: config-auth
+      configMap:
+        name: mare-config
+    - name: log-files
+      hostPath:
+        path: ../log/files-standalone
+        type: DirectoryOrCreate
+    - name: files-data
+      hostPath:
+        path: ../data/files-standalone
+        type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mare-config
+data:
+  authservice-standalone.json: |
+    {
+        "ConnectionStrings": {
+            "DefaultConnection": "Host=/var/run/postgresql;Port=5432;Database=mare;Username=mare;Keepalive=15;Minimum Pool Size=10;Maximum Pool Size=50;No Reset On Close=true;Max Auto Prepare=50;Enlist=false"
+        },
+        "Logging": {
+            "LogLevel": {
+                "Default": "Information",
+                "Microsoft": "Warning",
+                "Microsoft.Hosting.Lifetime": "Information",
+                "MareSynchronosServices": "Information",
+                "MareSynchronosShared": "Information",
+                "System.IO": "Information"
+            },
+            "File": {
+                "BasePath": "logs",
+                "FileAccessMode": "KeepOpenAndAutoFlush",
+                "FileEncodingName": "utf-8",
+                "DateFormat": "yyyMMdd",
+                "MaxFileSize": 104857600,
+                "Files": [
+                    {
+                        "Path": "<date:yyyy>/<date:MM>/<date:dd>/mare-<date:HH>-<counter:0000>.log"
+                    }
+                ]
+            }
+        },
+        "MareSynchronos": {
+            "DbContextPoolSize": 512,
+            "ShardName": "AuthServices",
+            "MetricsPort": 6150,
+            "Jwt": "teststringteststringteststringteststringteststringteststringteststringteststringteststringteststring",
+            "RedisConnectionString": "redis,password=secretredispassword",
+            "FailedAuthForTempBan": 5,
+            "UseGeoIP": false,
+            "GeoIPDbCityFile": ""
+        },
+        "AllowedHosts": "*",
+        "Kestrel": {
+            "Endpoints": {
+                "Http": {
+                    "Url": "http://+:6100"
+                }
+            }
+        },
+        "IpRateLimiting": {},
+        "IPRateLimitPolicies": {}
+    }
+  files-standalone.json: |
+    {
+      "ConnectionStrings": {
+          "DefaultConnection": "Host=/var/run/postgresql;Port=5432;Database=mare;Username=mare;Keepalive=15;Minimum Pool Size=10;Maximum Pool Size=50;No Reset On Close=true;Max Auto Prepare=50;Enlist=false"
+      },
+      "Logging": {
+          "LogLevel": {
+              "Default": "Warning",
+              "Microsoft": "Warning",
+              "Microsoft.Hosting.Lifetime": "Information",
+              "MareSynchronosStaticFilesServer": "Information",
+              "MareSynchronosShared": "Information",
+              "System.IO": "Information"
+          },
+          "File": {
+              "BasePath": "logs",
+              "FileAccessMode": "KeepOpenAndAutoFlush",
+              "FileEncodingName": "utf-8",
+              "DateFormat": "yyyMMdd",
+              "MaxFileSize": 104857600,
+              "Files": [
+                  {
+                      "Path": "<date:yyyy>/<date:MM>/<date:dd>/mare-<date:HH>-<counter:0000>.log"
+                  }
+              ]
+          }
+      },
+      "MareSynchronos": {
+          "DbContextPoolSize": 512,
+          "ShardName": "Files",
+          "MetricsPort": 6250,
+          "ForcedDeletionOfFilesAfterHours": -1,
+          "CacheSizeHardLimitInGiB": -1,
+          "UnusedFileRetentionPeriodInDays": 14,
+          "CacheDirectory": "/marecache/",
+          "RemoteCacheSourceUri": "",
+          "MainServerAddress": "http://mare-server:6000/",
+          "RedisConnectionString": "redis,password=secretredispassword",
+          "MainFileServerAddress": "",
+          "Jwt": "teststringteststringteststringteststringteststringteststringteststringteststringteststringteststring",
+          "UseColdStorage": false,
+          "IsDistributionNode": true
+      },
+      "AllowedHosts": "*",
+      "Kestrel": {
+          "Endpoints": {
+              "Http": {
+                  "Url": "http://+:6200"
+              }
+          }
+      },
+      "IpRateLimiting": {},
+      "IPRateLimitPolicies": {}
+    }
+  server-standalone.json: |
+    {
+      "ConnectionStrings": {
+          "DefaultConnection": "Host=/var/run/postgresql;Port=5432;Database=mare;Username=mare;Keepalive=15;Minimum Pool Size=10;Maximum Pool Size=50;No Reset On Close=true;Max Auto Prepare=50;Enlist=false"
+      },
+      "Logging": {
+          "LogLevel": {
+              "Default": "Information",
+              "Microsoft": "Warning",
+              "Microsoft.Hosting.Lifetime": "Information",
+              "Microsoft.EntityFramework": "Warning",
+              "MareSynchronosServer": "Information",
+              "MareSynchronosShared": "Information",
+              "System.IO": "Information",
+              "MareSynchronosServer.Services.SystemInfoService": "Information"
+          },
+          "File": {
+              "BasePath": "logs",
+              "FileAccessMode": "KeepOpenAndAutoFlush",
+              "FileEncodingName": "utf-8",
+              "DateFormat": "yyyMMdd",
+              "MaxFileSize": 104857600,
+              "Files": [
+                  {
+                      "Path": "<date:yyyy>/<date:MM>/<date:dd>/mare-<date:HH>-<counter:0000>.log"
+                  }
+              ]
+          }
+      },
+      "MareSynchronos": {
+          "DbContextPoolSize": 512,
+          "ShardName": "Main",
+          "MetricsPort": 6050,
+          "MainServerAddress": "",
+          "FailedAuthForTempBan": 5,
+          "TempBanDurationInMinutes": 5,
+          "Jwt": "teststringteststringteststringteststringteststringteststringteststringteststringteststringteststring",
+          "WhitelistedIps": [
+              "*"
+          ],
+          "RedisConnectionString": "redis,password=secretredispassword",
+          "CdnFullUrl": "http://${DOMAIN}:6200/cache/",
+          "MaxExistingGroupsByUser": 6,
+          "MaxJoinedGroupsByUser": 10,
+          "MaxGroupUserCount": 100,
+          "PurgeUnusedAccounts": false,
+          "PurgeUnusedAccountsPeriodInDays": 14,
+          "ExpectedClientVersion": "0.9.0",
+          "XIVAPIKey": ""
+      },
+      "AllowedHosts": "*",
+      "Kestrel": {
+          "Endpoints": {
+              "Http": {
+                  "Url": "http://+:6000"
+              },
+              "Grpc": {
+                  "Protocols": "Http2",
+                  "Url": "http://+:6005"
+              }
+          }
+      },
+      "IpRateLimiting": {},
+      "IPRateLimitPolicies": {}
+    }
+  services-standalone.json: |
+    {
+      "ConnectionStrings": {
+          "DefaultConnection": "Host=/var/run/postgresql;Port=5432;Database=mare;Username=mare;Keepalive=15;Minimum Pool Size=10;Maximum Pool Size=50;No Reset On Close=true;Max Auto Prepare=50;Enlist=false"
+      },
+      "Logging": {
+          "LogLevel": {
+              "Default": "Warning",
+              "Microsoft": "Warning",
+              "Microsoft.Hosting.Lifetime": "Information",
+              "MareSynchronosServices": "Information",
+              "MareSynchronosShared": "Information",
+              "System.IO": "Information"
+          },
+          "File": {
+              "BasePath": "logs",
+              "FileAccessMode": "KeepOpenAndAutoFlush",
+              "FileEncodingName": "utf-8",
+              "DateFormat": "yyyMMdd",
+              "MaxFileSize": 104857600,
+              "Files": [
+                  {
+                      "Path": "<date:yyyy>/<date:MM>/<date:dd>/mare-<date:HH>-<counter:0000>.log"
+                  }
+              ]
+          }
+      },
+      "MareSynchronos": {
+          "DbContextPoolSize": 512,
+          "ShardName": "Services",
+          "MetricsPort": 6150,
+          "CdnFullUrl": "http://${DOMAIN}:6200/cache/",
+          "MainServerAddress": "http://mare-server:6000/",
+          "MainServerGrpcAddress": "http://mare-server:6005/",
+          "DiscordChannelForReports": "${DISCORD_CHANNEL_ID}", 
+          "DiscordBotToken": "${DISCORD_BOT_TOKEN}",
+          "DiscordChannelForMessages": "${DISCORD_CHANNEL_ID}",
+          "DiscordChannelForCommands": "${DISCORD_CHANNEL_ID}",
+          "Jwt": "teststringteststringteststringteststringteststringteststringteststringteststringteststringteststring",
+          "RedisConnectionString": "redis,password=secretredispassword",
+          "VanityRoles": {"212446567230210049":"Main Developer", "892919072310837269":"Patreon Subscriber"}
+      }
+      ,
+      "AuthServiceConfiguration": {
+          "PublicOAuthBaseUri": "http://${DOMAIN}/",
+          "DiscordOAuthClientId": "${DISCORD_OAUTH_CLIENTID}",
+          "DiscordOAuthClientSecret": "${DISCORD_OAUTH_CLIENTSECRET}",
+        },
+      "AllowedHosts": "*",
+      "Kestrel": {
+      },
+      "IpRateLimiting": {},
+      "IPRateLimitPolicies": {}
+    }
