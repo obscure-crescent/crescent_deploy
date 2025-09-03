@@ -74,8 +74,6 @@ If you prefer to run the commands yourself or tailor the order, execute the foll
 podman kube play db.yaml
 sleep 5
 podman kube play mare.yaml
-sleep 5
-podman kube play nginx.yaml
 ```
 
 When finished, Podman will create several pods named according to the `metadata.name` fields in the YAML files (e.g. `postgres`, `redis`, `mare-server`, etc.).  You can inspect them with `podman pod ps` and view their logs with `podman pod logs <pod-name>`.
@@ -120,7 +118,6 @@ To stop the services, use `podman kube down` with the name of the manifest you p
 ```sh
 podman kube down db.yaml
 podman kube down mare.yaml
-podman kube down nginx.yaml
 ```
 
 Alternatively, you can remove individual pods with `podman pod rm -f <pod-name>`.  Persistent volumes created by Podman (such as the PostgreSQL data volume) will remain unless explicitly removed.
