@@ -12,10 +12,6 @@ This repository contains a set of Kubernetes manifests and helper scripts for se
 | **`generate-yaml.sh`** | A helper script that uses [`envsubst`](https://www.gnu.org/software/gettext/manual/html_node/envsubst-Invocation.html) to expand environment variables in `mare-template.yaml` and write the resulting manifest to `mare.yaml`.  It also prints the values used for `HOST_IP` and `DOMAIN` for transparency. |
 | **`start_linux.sh`** | Simple start‑up script that invokes `podman kube play` for each manifest in the correct order: first `db.yaml`, then `mare.yaml`, and finally `nginx.yaml`. |
 
-> **Note**
->
-> The `node_modules` directory, `package.json` and the JavaScript/TypeScript tooling in this repository are part of the environment used to create presentation slides during the challenge and are not needed for running the server.  You can safely ignore these files when deploying Mare Synchronos.
-
 ## Prerequisites
 
 Before attempting to run the services, ensure that your system meets the following requirements:
